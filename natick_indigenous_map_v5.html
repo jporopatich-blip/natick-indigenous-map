@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Natick-area Map — Precise Town Polygons (MassGIS)</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <style>
+    html, body { height: 100%; margin: 0; font-family: system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; }
+    #app { display: flex; flex-direction: column; height: 100%; }
+    header { padding: 10px 14px; border-bottom: 1px solid #eee; }
+    header h1 { font-size: 16px; margin: 0 0 6px; }
+    header p { font-size: 12px; margin: 0; color: #333; }
+    #content { display: grid; grid-template-columns: 1fr 360px; gap: 10px; padding: 10px; height: calc(100% - 68px); box-sizing: border-box; }
+    #map { width: 100%; height: 100%; border-radius: 14px; box-shadow: 0 2px 6px rgba(0,0,0,.08); }
+    #panel { border: 1px solid #eee; border-radius: 14px; padding: 12px; overflow: auto; }
+    .legend .swatch { display:inline-block;width:14px;height:14px;border-radius:3px;margin-right:6px;vertical-align:middle; border:2px solid transparent; }
+    .passfail { display:flex; align-items:center; gap:8px; font-size:12px; }
+    .dot { width:8px; height:8px; border-radius:9999px; display:inline-block; }
+    .tiny { font-size: 12px; color:#444; }
+    .label-pill { 
+      font: 12px/1.2 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+      color:#111;background:#fff;padding:4px 6px;border-radius:8px;
+      box-shadow:0 1px 2px rgba(0,0,0,.15);border:1px solid rgba(0,0,0,.1);
+      white-space:nowrap;
+    }
+    .poly-label {
+      font: 700 14px/1.1 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+      color: #0a0a0a;
+      text-shadow: 0 0 3px rgba(255,255,255,0.9), 0 0 6px rgba(255,255,255,0.8);
+      background: rgba(255,255,255,0.7);
+      padding: 3px 6px;
+      border-radius: 6px;
+      border: 1px solid rgba(0,0,0,.08);
+    }
+    .toggle { margin: 8px 0; display: flex; align-items: center; gap: 8px; }
+    .kbd { font: 11px monospace; background: #f3f3f3; border:1px solid #e3e3e3; border-radius:4px; padding:1px 4px; }
+    .warn { background:#fff8e1; border:1px solid #ffe082; padding:8px; border-radius:8px; font-size:12px; color:#7a4f01; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <header>
+      <h1>Natick-area Map — Precise Town Polygons (MassGIS)</h1>
+      <p><strong>Purple</strong> = Natick Praying Indians (South Natick site area) • <strong>Blue</strong> = Natick Nipmuc (precise Natick boundary) • <strong>Orange</strong> = Hassanamisco Nipmuc Band (Hassanamesit site). All town outlines from MassGIS.</p>
+    </header>
+    <div id="content">
+      <div id="map" role="application" aria-label="Map with precise Natick & Grafton boundaries, and Indigenous site layers"></div>
+      <aside id="panel">
+        <div class="warn">
+          <strong>Tip:</strong> If this file is opened via <code>file://</code>, your browser may block data loads. Serve it locally:<br/>
+          <code class="kbd">python3 -m http.server</code> then visit <code class="kbd">http://localhost:8000/natick_indigenous_map_v5.html</code>
+        </div>
+
+        <h3 style="margin:12px 0 10px">Legend</h3>
+        <div class="legend tiny" style="margin-bottom:8px">
+          <div><span class="swatch" style="background:#7e3ff2;opacity:.25;border-color:#7e3ff2"></span><strong>Purple:</strong> Natick Praying Indians — South Natick site</div>
+          <div><span class="swatch" style="background:#1f77b4;opacity:.25;border-color:#1f77b4"></span><strong>Blue:</strong> Natick (precise) — local Nipmuc affiliation</div>
+          <div><span class="swatch" style="background:#ff7f0e;opacity:.25;border-color:#ff7f0e"></span><strong>Orange:</strong> Hassanamisco Nipmuc Band — Hassanamesit site</div>
+          <div><span class="swatch" style="background:#888;opacity:.6;border-color:#666"></span>All MA town outlines — MassGIS</div>
+        </div>
+
+        <div class="toggle"><input id="toggleNPI" type="checkbox" checked><label for="toggleNPI">Show Natick Praying Indians area (purple)</label></div>
+        <div class="toggle"><input id="toggleNN" type="checkbox" checked><label for="toggleNN">Show Natick (precise boundary, blue)</label></div>
+        <div class="toggle"><input id="toggleHNB" type="checkbox" checked><label for="toggleHNB">Show Hassanamisco Nipmuc Band area (orange)</label></div>
+
+        <hr style="margin:12px 0"/>
+        <div class="toggle"><input id="toggleContextNip" type="checkbox"><label for="toggleContextNip">Optional context — Nipmuc homeland polygons (Native Land)</label></div>
+        <div class="toggle"><input id="toggleContextMass" type="checkbox"><label for="toggleContextMass">Optional context — Massachusett polygons (Native Land)</label></div>
+
+        <h3 style="margin:14px 0 8px">Status</h3>
+        <div id="status" class="tiny"></div>
+      </aside>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    const map = L.map('map', { zoomSnap: 0.25 }).setView([42.28, -71.35], 11);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; OpenStreetMap contributors' }).addTo(map);
+
+    const statusEl = document.getElementById('status');
+    const tests = [
+      { name: 'MassGIS towns loaded', pass: false },
+      { name: 'Natick (precise) highlighted', pass: false },
+      { name: 'Natick Praying Indians site drawn', pass: false },
+      { name: 'Hassanamisco site drawn', pass: false },
+    ];
+    function renderStatus(){ statusEl.innerHTML = tests.map(t=>`<div class="passfail"><span class="dot" style="background:${t.pass?'#16a34a':'#dc2626'}"></span>${t.pass?'PASS':'FAIL'} — ${t.name}</div>`).join(''); }
+    renderStatus();
+
+    function labelIcon(text, cls='label-pill'){ return L.divIcon({ className:'', html:`<div class="${cls}">${text}</div>`, iconSize:[0,0], iconAnchor:[0,0] }); }
+    function bigPolyLabel(text){ return L.divIcon({ className:'', html:`<div class="poly-label">${text}</div>`, iconSize:[0,0], iconAnchor:[0,0] }); }
+
+    const southNatick = [42.2737081, -71.3161688];
+    const hassanamisco = [42.210833, -71.705];
+
+    // Groups
+    const townsGroup = L.layerGroup().addTo(map);
+    const natickGroup = L.layerGroup().addTo(map);
+    const hnbGroup = L.layerGroup().addTo(map);
+    const npiGroup = L.layerGroup().addTo(map);
+    const contextNip = L.layerGroup();
+    const contextMass = L.layerGroup();
+
+    // Core site layers
+    L.circle(southNatick, { radius: 2000, color:'#7e3ff2', weight:2, opacity:0.95, fillColor:'#7e3ff2', fillOpacity:0.25 })
+      .addTo(npiGroup).bindPopup('<strong>Natick Praying Indians</strong><br>South Natick (1651).');
+    L.marker(southNatick, { icon: labelIcon('Natick Praying Indians — South Natick') }).addTo(npiGroup);
+    tests[2].pass = true; renderStatus();
+
+    L.circle(hassanamisco, { radius: 800, color:'#ff7f0e', weight:2, opacity:0.95, fillColor:'#ff7f0e', fillOpacity:0.25, dashArray:'6,4' })
+      .addTo(hnbGroup).bindPopup('<strong>Hassanamisco Nipmuc Band</strong><br>Hassanamesit Reservation (Grafton).');
+    L.marker(hassanamisco, { icon: labelIcon('Hassanamisco Nipmuc Band — Hassanamesit Reservation') }).addTo(hnbGroup);
+    tests[3].pass = true; renderStatus();
+
+    // Fetch precise Massachusetts municipalities (MassGIS)
+    // Dataset source: MassGIS -> (same as earlier URL). Large GeoJSON; CORS requires serving via http(s), not file://
+    const MASSGIS_URL = 'https://opendata.arcgis.com/datasets/4bcb993b19f14a179fa43f2a3019ff25_0.geojson';
+    fetch(MASSGIS_URL).then(r => r.json()).then(gj => {
+      // All towns outlines
+      L.geoJSON(gj, {
+        style: { color:'#888', weight:0.8, opacity:0.8, fillOpacity:0 }
+      }).addTo(townsGroup);
+      tests[0].pass = true; renderStatus();
+
+      // Find NATICK + GRAFTON features
+      const natickFeat = gj.features.find(f => f.properties && f.properties.TOWN === 'Natick');
+      const graftonFeat = gj.features.find(f => f.properties && f.properties.TOWN === 'Grafton');
+
+      if (natickFeat) {
+        L.geoJSON(natickFeat, {
+          style: { color:'#1f77b4', weight:2, opacity:0.95, fillColor:'#1f77b4', fillOpacity:0.18 }
+        }).addTo(natickGroup);
+        // Label at a rough centroid
+        const c = centroid(natickFeat.geometry);
+        if (c) L.marker(c, { icon: bigPolyLabel('NATICK — Nipmuc (local affiliation)') }).addTo(natickGroup);
+        tests[1].pass = true; renderStatus();
+      }
+
+      if (graftonFeat) {
+        L.geoJSON(graftonFeat, { style: { color:'#8c6239', weight:1.5, opacity:0.9, fillOpacity:0 } }).addTo(hnbGroup);
+      }
+    }).catch(err => {
+      console.warn('MassGIS fetch failed, likely due to CORS from file://', err);
+      alert('MassGIS boundary data could not load (likely CORS if opened from file://). Please serve the file locally or host it. The Indigenous site layers still work.');
+      renderStatus();
+    });
+
+    // Rough centroid for polygons
+    function centroid(geom){
+      let sx=0, sy=0, c=0;
+      function addRing(r){ r.forEach(p=>{ sx+=p[0]; sy+=p[1]; c++; }); }
+      if (!geom) return null;
+      if (geom.type==='Polygon') geom.coordinates.forEach(addRing);
+      if (geom.type==='MultiPolygon') geom.coordinates.forEach(poly => poly.forEach(addRing));
+      return c ? [sy/c, sx/c] : null;
+    }
+
+    // Optional Native Land context overlays
+    function addContext(url, group, baseStyle, hiStyle, labelText) {
+      fetch(url).then(r => r.json()).then(gj => {
+        L.geoJSON(gj, {
+          style: baseStyle,
+          onEachFeature: (f, l) => {
+            const nm = (f.properties && (f.properties.Name || f.properties.name)) || labelText;
+            l.bindPopup('<strong>'+nm+'</strong><br>Regional context overlay from Native Land Digital.');
+            l.on('mouseover', () => l.setStyle(hiStyle));
+            l.on('mouseout',  () => l.setStyle(baseStyle));
+          }
+        }).addTo(group);
+        // label(s)
+        if (gj.features) gj.features.forEach(ft => {
+          const c = centroid(ft.geometry);
+          if (c) L.marker(c, { icon: bigPolyLabel(labelText.toUpperCase()) }).addTo(group);
+        });
+        map.addLayer(group);
+      }).catch(() => {
+        alert('Could not load '+labelText+' context layer (likely CORS from local file). Try hosting the file or using a local server.');
+      });
+    }
+    const styleNipBase = { color: '#1f77b4', weight: 2, opacity: 0.9, fillOpacity: 0.12 };
+    const styleNipHi   = { color: '#1f77b4', weight: 3, opacity: 1.0, fillOpacity: 0.28 };
+    const styleMassBase = { color: '#ff7f0e', weight: 2, opacity: 0.9, fillOpacity: 0.12, dashArray:'6,4' };
+    const styleMassHi   = { color: '#ff7f0e', weight: 3, opacity: 1.0, fillOpacity: 0.28, dashArray:'6,4' };
+
+    document.getElementById('toggleNPI').addEventListener('change', e => { e.target.checked ? npiGroup.addTo(map) : map.removeLayer(npiGroup); });
+    document.getElementById('toggleNN').addEventListener('change', e => { e.target.checked ? natickGroup.addTo(map) : map.removeLayer(natickGroup); });
+    document.getElementById('toggleHNB').addEventListener('change', e => { e.target.checked ? hnbGroup.addTo(map) : map.removeLayer(hnbGroup); });
+
+    document.getElementById('toggleContextNip').addEventListener('change', e => {
+      if (e.target.checked) { addContext('https://native-land.ca/api/v1/territories?name=Nipmuc', contextNip, styleNipBase, styleNipHi, 'Nipmuc (context)'); }
+      else { map.removeLayer(contextNip); }
+    });
+    document.getElementById('toggleContextMass').addEventListener('change', e => {
+      if (e.target.checked) { addContext('https://native-land.ca/api/v1/territories?name=Massachusett', contextMass, styleMassBase, styleMassHi, 'Massachusett (context)'); }
+      else { map.removeLayer(contextMass); }
+    });
+  </script>
+</body>
+</html>
